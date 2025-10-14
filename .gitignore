@@ -1,0 +1,13 @@
+# Virtual Environment
+venv/
+
+# Database
+instance/absensi.db
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor/IDE folders (opsional, tapi praktik yang baik)
+.idea/
+.vscode/
