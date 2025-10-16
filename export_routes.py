@@ -2,13 +2,13 @@ from flask import Blueprint, render_template, request, send_file, redirect, url_
 from datetime import datetime
 import pandas as pd, io
 from utils import check_admin_session
-from models import db, Absensi, Siswa, Pegawai
+from models import db, Absensi, Siswa, Pegawai, AbsensiPegawai
 
-# 🟢 Inisialisasi Blueprint dengan prefix URL
+# Inisialisasi Blueprint dengan prefix URL
 export_bp = Blueprint("export_bp", __name__, url_prefix="/export")
 
 # ======================================================================
-#  HALAMAN UTAMA EXPORT
+#  HALAMAN UTAMA EXPORT (Tidak Berubah)
 # ======================================================================
 @export_bp.route("/", methods=["GET", "POST"])
 def export_laporan():
@@ -24,7 +24,7 @@ def export_laporan():
         bulan = request.form.get("bulan")
         tahun = request.form.get("tahun")
 
-        # 🔗 Redirect ke fungsi ekspor sesuai pilihan
+        # Redirect ke fungsi ekspor sesuai pilihan
         return redirect(url_for("export_bp.download_laporan",
                                 tipe_data=tipe_data,
                                 jenis_laporan=jenis_laporan,
@@ -36,9 +36,8 @@ def export_laporan():
     return render_template("export_laporan.html", current_year=datetime.now().year)
 
 
-
 # ======================================================================
-#  FUNGSI EKSPOR DATA (XLSX / CSV)
+#  FUNGSI EKSPOR DATA (DENGAN LOGIKA BARU UNTUK STATUS)
 # ======================================================================
 @export_bp.route("/download_laporan")
 def download_laporan():
@@ -53,28 +52,36 @@ def download_laporan():
     bulan = request.args.get("bulan")
     tahun = request.args.get("tahun")
 
-    # 🔍 Query data berdasarkan tipe (siswa / pegawai)
+    # Query data berdasarkan tipe (siswa / pegawai)
     if tipe_data == "siswa":
         query = db.session.query(Absensi, Siswa).join(Siswa, Absensi.nis == Siswa.nis)
     else:
-        query = db.session.query(Absensi, Pegawai).join(Pegawai, Absensi.nip == Pegawai.nip)
+        # Menggunakan model AbsensiPegawai untuk data pegawai
+        query = db.session.query(AbsensiPegawai, Pegawai).join(Pegawai, AbsensiPegawai.no_id == Pegawai.no_id)
 
-    # 🗓 Filter berdasarkan jenis laporan
+    # Filter berdasarkan jenis laporan
+    ModelAbsensi = Absensi if tipe_data == "siswa" else AbsensiPegawai
     if jenis_laporan == "harian" and tanggal:
-        query = query.filter(Absensi.tanggal == tanggal)
+        query = query.filter(ModelAbsensi.tanggal == tanggal)
     elif jenis_laporan == "bulanan" and bulan and tahun:
-        query = query.filter(db.extract("month", Absensi.tanggal) == int(bulan))
-        query = query.filter(db.extract("year", Absensi.tanggal) == int(tahun))
+        query = query.filter(db.extract("month", ModelAbsensi.tanggal) == int(bulan))
+        query = query.filter(db.extract("year", ModelAbsensi.tanggal) == int(tahun))
 
-    # 📦 Susun data ke DataFrame
+    # Susun data ke DataFrame
     data = []
     for absensi, orang in query.all():
+        # ==============================================================================
+        #  PERUBAHAN: Jika status "Terlambat", ubah menjadi "Hadir" untuk laporan
+        # ==============================================================================
+        status_laporan = "Hadir" if absensi.status == "Terlambat" else absensi.status
+        # ==============================================================================
+
         data.append({
             "Nama": orang.nama,
-            "ID": getattr(orang, "nis", getattr(orang, "nip", None)),
+            "ID": getattr(orang, "nis", getattr(orang, "no_id", None)),
             "Tanggal": absensi.tanggal.strftime("%Y-%m-%d"),
-            "Waktu": absensi.waktu,
-            "Status": absensi.status
+            "Waktu": absensi.waktu.strftime('%H:%M:%S'),
+            "Status": status_laporan  # Gunakan status yang sudah diubah
         })
 
     if not data:
@@ -82,9 +89,9 @@ def download_laporan():
         return redirect(url_for("export_bp.export_laporan"))
 
     df = pd.DataFrame(data)
-    filename = f"{tipe_data}_{jenis_laporan}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    filename = f"laporan_{tipe_data}_{jenis_laporan}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # 💾 Ekspor Excel
+    # Ekspor ke Excel
     if format_file == "xlsx":
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -95,7 +102,7 @@ def download_laporan():
                          download_name=f"{filename}.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # 💾 Ekspor CSV
+    # Ekspor ke CSV
     elif format_file == "csv":
         output = io.StringIO()
         df.to_csv(output, index=False)

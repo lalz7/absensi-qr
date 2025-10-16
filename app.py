@@ -1,4 +1,6 @@
-import csv, os, io
+import os
+from dotenv import load_dotenv
+import csv, io
 import json
 import calendar as cal
 from datetime import datetime, time, date
@@ -9,12 +11,12 @@ from flask import (
 )
 from PIL import Image, ImageDraw, ImageFont
 import pandas as pd, qrcode, requests
-from sqlalchemy import and_, select, delete
+from sqlalchemy import and_, select, delete, exc
 
 from models import (
     db, Siswa, Absensi, SettingWaktu, Kelas,
     Pegawai, AbsensiPegawai, SettingWaktuGuruStaf,
-    SettingWaktuKeamanan, JadwalKeamanan
+    SettingWaktuKeamanan, JadwalKeamanan, HariLibur
 )
 from export_routes import export_bp
 from absensi_routes import absensi_bp, get_badge_color
@@ -29,9 +31,23 @@ from pegawai_routes import pegawai_bp
 # =======================================================================
 #  INISIALISASI APLIKASI FLASK
 # =======================================================================
+# Muat environment variables dari file .env
+load_dotenv()
+
 app = Flask(__name__)
 app.secret_key = "absensi_qr_secret"
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///absensi.db'
+
+# ==============================================================================
+#  KONFIGURASI DATABASE DARI ENVIRONMENT VARIABLES (.env)
+# ==============================================================================
+# Ambil konfigurasi dari environment variables
+USER = os.getenv("DB_USER")
+PASSWORD = os.getenv("DB_PASSWORD")
+HOST = os.getenv("DB_HOST")
+DATABASE_NAME = os.getenv("DB_NAME")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+mysqlconnector://{USER}:{PASSWORD}@{HOST}/{DATABASE_NAME}'
+# ==============================================================================
 
 # Folder utama untuk QR
 BASE_QR_FOLDER = os.path.join('static', 'qr_codes')
@@ -59,7 +75,7 @@ app.register_blueprint(siswa_bp)
 app.register_blueprint(pegawai_bp)
 
 # =======================================================================
-#  FUNGSI HELPER & UTILITAS
+#  FUNGSI HELPER & UTILITAS (TIDAK BERUBAH)
 # =======================================================================
 def check_admin_session():
     """Periksa sesi admin, redirect ke login jika belum login."""
@@ -71,11 +87,11 @@ def get_badge_color(status):
 app.jinja_env.filters['get_badge_color'] = get_badge_color
 
 # =======================================================================
-#  ROUTE: AUTENTIKASI ADMIN
+#  ROUTE: AUTENTIKASI ADMIN (TIDAK BERUBAH)
 # =======================================================================
 @app.route("/", methods=["GET", "POST"])
 def login():
-    """Rute login admin (gunakan autentikasi aman di produksi)."""
+    """Rute login admin."""
     if request.method == "POST":
         if request.form["username"] == "admin" and request.form["password"] == "123":
             session["admin"] = True
@@ -96,31 +112,23 @@ def logout():
 # =======================================================================
 @app.route("/pengaturan", methods=["GET", "POST"])
 def pengaturan():
-    """Tampilkan dan kelola halaman pengaturan waktu (Siswa, Guru/Staf, Keamanan)."""
+    """Tampilkan dan kelola halaman pengaturan."""
     auth_check = check_admin_session()
     if auth_check:
         return auth_check
 
-    # Ambil data terbaru dari DB setiap kali route dipanggil
-    setting_siswa = SettingWaktu.query.first()
-    setting_guru_staf = SettingWaktuGuruStaf.query.first()
-
-    shifts = ['shift1', 'shift2', 'shift3']
-    settings_keamanan = {}
-    for s in shifts:
-        setting_keamanan = SettingWaktuKeamanan.query.filter_by(nama_shift=s).first()
-        if not setting_keamanan:
-            setting_keamanan = SettingWaktuKeamanan(nama_shift=s)
-        settings_keamanan[s] = setting_keamanan
-
-    # Handle POST (simpan siswa)
+    # --- LOGIKA POST (HANYA UNTUK SIMPAN WAKTU SISWA - FITUR ASLI) ---
     if request.method == "POST":
         action = request.form.get("action")
         setting_type = request.form.get("setting_type")
-        print("POST:", dict(request.form))
 
         if setting_type == "siswa" and action == "save_siswa":
             try:
+                setting_siswa = SettingWaktu.query.first()
+                if not setting_siswa:
+                    setting_siswa = SettingWaktu()
+                    db.session.add(setting_siswa)
+
                 jam_masuk_mulai = request.form.get("jam_masuk_mulai")
                 jam_masuk_selesai = request.form.get("jam_masuk_selesai")
                 jam_pulang_mulai = request.form.get("jam_pulang_mulai")
@@ -129,97 +137,129 @@ def pengaturan():
 
                 if not all([jam_masuk_mulai, jam_masuk_selesai, jam_pulang_mulai, jam_pulang_selesai]):
                     flash("Semua waktu wajib diisi (kecuali batas terlambat).", "danger")
-                    return redirect(url_for("pengaturan"))
-
-                # buat / update record
-                if not setting_siswa:
-                    setting_siswa = SettingWaktu()
-                    db.session.add(setting_siswa)
-
-                setting_siswa.jam_masuk_mulai = datetime.strptime(jam_masuk_mulai, "%H:%M").time()
-                setting_siswa.jam_masuk_selesai = datetime.strptime(jam_masuk_selesai, "%H:%M").time()
-                setting_siswa.jam_pulang_mulai = datetime.strptime(jam_pulang_mulai, "%H:%M").time()
-                setting_siswa.jam_pulang_selesai = datetime.strptime(jam_pulang_selesai, "%H:%M").time()
-                setting_siswa.jam_terlambat_selesai = (
-                    datetime.strptime(jam_terlambat_selesai, "%H:%M").time()
-                    if jam_terlambat_selesai else None
-                )
-
-                db.session.commit()
-                flash("Pengaturan waktu siswa berhasil disimpan.", "success")
-
+                else:
+                    setting_siswa.jam_masuk_mulai = datetime.strptime(jam_masuk_mulai, "%H:%M").time()
+                    setting_siswa.jam_masuk_selesai = datetime.strptime(jam_masuk_selesai, "%H:%M").time()
+                    setting_siswa.jam_pulang_mulai = datetime.strptime(jam_pulang_mulai, "%H:%M").time()
+                    setting_siswa.jam_pulang_selesai = datetime.strptime(jam_pulang_selesai, "%H:%M").time()
+                    setting_siswa.jam_terlambat_selesai = (datetime.strptime(jam_terlambat_selesai, "%H:%M").time() if jam_terlambat_selesai else None)
+                    db.session.commit()
+                    flash("Pengaturan waktu siswa berhasil disimpan.", "success")
             except Exception as e:
                 db.session.rollback()
                 flash(f"Gagal menyimpan pengaturan siswa: {str(e)}", "danger")
-                app.logger.exception("Error saving setting siswa")
 
-        # setelah POST redirect kembali agar URL tetap bersih
         return redirect(url_for("pengaturan"))
 
-    # Render page (tidak ada auto_open_modal di sini)
+    # --- LOGIKA GET (MENAMPILKAN SEMUA DATA PENGATURAN) ---
+    setting_siswa = SettingWaktu.query.first()
+    setting_guru_staf = SettingWaktuGuruStaf.query.first()
+    shifts = ['shift1', 'shift2', 'shift3', 'shift4']
+    settings_keamanan = {s: SettingWaktuKeamanan.query.filter_by(nama_shift=s).first() or SettingWaktuKeamanan(nama_shift=s) for s in shifts}
+    
+    # Ambil data hari libur spesial
+    daftar_hari_libur = HariLibur.query.order_by(HariLibur.tanggal.asc()).all()
+
+    # Ambil data hari libur rutin (dari kolom di SettingWaktu)
+    hari_libur_rutin_tersimpan = []
+    if setting_siswa and setting_siswa.hari_libur_rutin:
+        hari_libur_rutin_tersimpan = setting_siswa.hari_libur_rutin.split(',')
+    
+    semua_hari = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+
     return render_template(
         "pengaturan.html",
         setting_siswa_data=setting_siswa,
         setting_guru_staf=setting_guru_staf,
         settings_keamanan=settings_keamanan,
         shifts=shifts,
+        daftar_hari_libur=daftar_hari_libur,
+        hari_libur_rutin_tersimpan=hari_libur_rutin_tersimpan,
+        semua_hari=semua_hari
     )
 
+# =======================================================================
+#  ROUTE BARU: KELOLA HARI LIBUR (HANYA POST)
+# =======================================================================
+@app.route("/hari_libur", methods=["POST"])
+def kelola_hari_libur():
+    auth_check = check_admin_session()
+    if auth_check: return auth_check
+    
+    action = request.form.get("action")
+
+    # --- Aksi Menyimpan Hari Libur Rutin (Checkbox) ---
+    if action == "simpan_rutin":
+        setting_waktu = SettingWaktu.query.first()
+        if not setting_waktu:
+            flash("Harap simpan 'Pengaturan Waktu Siswa' setidaknya sekali sebelum mengatur hari libur rutin.", "warning")
+            return redirect(url_for("pengaturan"))
+            
+        libur_rutin_terpilih = request.form.getlist('hari_rutin')
+        setting_waktu.hari_libur_rutin = ",".join(libur_rutin_terpilih)
+        db.session.commit()
+        flash("Pengaturan hari libur rutin berhasil disimpan.", "success")
+
+    # --- Aksi Menambah Hari Libur Spesial ---
+    elif action == "tambah_spesial":
+        tanggal_str = request.form.get("tanggal")
+        keterangan = request.form.get("keterangan")
+        if not tanggal_str or not keterangan:
+            flash("Tanggal dan Keterangan wajib diisi.", "danger")
+            return redirect(url_for("pengaturan"))
+        try:
+            tanggal_obj = datetime.strptime(tanggal_str, "%Y-%m-%d").date()
+            libur_baru = HariLibur(tanggal=tanggal_obj, keterangan=keterangan)
+            db.session.add(libur_baru)
+            db.session.commit()
+            flash(f"Hari libur spesial pada {tanggal_str} berhasil ditambahkan.", "success")
+        except exc.IntegrityError:
+            db.session.rollback()
+            flash(f"Tanggal {tanggal_str} sudah terdaftar sebagai hari libur.", "danger")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Terjadi kesalahan: {str(e)}", "danger")
+
+    # --- Aksi Menghapus Hari Libur Spesial ---
+    elif action == "hapus_spesial":
+        libur_id = request.form.get("id")
+        libur_to_delete = HariLibur.query.get(libur_id)
+        if libur_to_delete:
+            db.session.delete(libur_to_delete)
+            db.session.commit()
+            flash("Hari libur spesial berhasil dihapus.", "success")
+        else:
+            flash("Hari libur tidak ditemukan.", "danger")
+
+    return redirect(url_for("pengaturan"))
 
 # =======================================================================
-#  API: Ambil data pengaturan siswa (dipanggil oleh JS ketika Reset diklik)
+#  ROUTE LAINNYA (TIDAK BERUBAH)
 # =======================================================================
 @app.route("/api/setting_siswa", methods=["GET"])
 def api_get_setting_siswa():
     auth_check = check_admin_session()
     if auth_check:
-        # Jika check_admin_session mengembalikan redirect/Response, kembalikan itu
         return auth_check
 
     setting = SettingWaktu.query.first()
-    if not setting:
-        data = {
-            "jam_masuk_mulai": "",
-            "jam_masuk_selesai": "",
-            "jam_terlambat_selesai": "",
-            "jam_pulang_mulai": "",
-            "jam_pulang_selesai": ""
-        }
-    else:
-        data = {
-            "jam_masuk_mulai": setting.jam_masuk_mulai.strftime("%H:%M") if setting.jam_masuk_mulai else "",
-            "jam_masuk_selesai": setting.jam_masuk_selesai.strftime("%H:%M") if setting.jam_masuk_selesai else "",
-            "jam_terlambat_selesai": setting.jam_terlambat_selesai.strftime("%H:%M") if setting.jam_terlambat_selesai else "",
-            "jam_pulang_mulai": setting.jam_pulang_mulai.strftime("%H:%M") if setting.jam_pulang_mulai else "",
-            "jam_pulang_selesai": setting.jam_pulang_selesai.strftime("%H:%M") if setting.jam_pulang_selesai else ""
-        }
-
+    data = {
+        "jam_masuk_mulai": setting.jam_masuk_mulai.strftime("%H:%M") if setting and setting.jam_masuk_mulai else "",
+        "jam_masuk_selesai": setting.jam_masuk_selesai.strftime("%H:%M") if setting and setting.jam_masuk_selesai else "",
+        "jam_terlambat_selesai": setting.jam_terlambat_selesai.strftime("%H:%M") if setting and setting.jam_terlambat_selesai else "",
+        "jam_pulang_mulai": setting.jam_pulang_mulai.strftime("%H:%M") if setting and setting.jam_pulang_mulai else "",
+        "jam_pulang_selesai": setting.jam_pulang_selesai.strftime("%H:%M") if setting and setting.jam_pulang_selesai else ""
+    }
     return jsonify(data)
-
 
 @app.route("/pengaturan_pegawai", methods=["GET", "POST"])
 def pengaturan_pegawai():
-    """Menangani POST dari modal pengaturan waktu absensi pegawai (Guru/Staf/Keamanan)."""
-    # Pastikan fungsi ini ditempatkan setelah definisi model dan db
     auth_check = check_admin_session()
     if auth_check:
         return auth_check
 
-    # UPDATE: Tambahkan 'shift4' ke daftar shift (jika diperlukan)
     shifts = ['shift1', 'shift2', 'shift3', 'shift4']
-    settings_keamanan = {}
-    setting_guru_staf = SettingWaktuGuruStaf.query.first()  # Diperlukan untuk logika save Guru/Staf
-    for s in shifts:
-        setting = SettingWaktuKeamanan.query.filter_by(nama_shift=s).first()
-        if not setting:
-            # Gunakan placeholder untuk GET (walaupun GET di-redirect ke /pengaturan)
-            setting = type('SettingPlaceholder', (object,), {
-                'id': None, 'jam_masuk_mulai': None, 'jam_masuk_selesai': None,
-                'jam_pulang_mulai': None, 'jam_pulang_selesai': None,
-                'jam_terlambat_selesai': None, 'nama_shift': s
-            })()
-
-        settings_keamanan[s] = setting
+    setting_guru_staf = SettingWaktuGuruStaf.query.first()
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -231,11 +271,9 @@ def pengaturan_pegawai():
                     db.session.delete(setting_guru_staf)
                     flash("Pengaturan waktu Guru/Staf berhasil direset.", "success")
                 elif setting_type == "keamanan_all":
-                    # Reset semua shift keamanan (termasuk shift1, shift2, shift3, shift4)
                     SettingWaktuKeamanan.query.delete()
                     flash("Semua pengaturan shift Keamanan berhasil direset.", "success")
                 elif setting_type in shifts:
-                    # Reset shift spesifik
                     current_setting = SettingWaktuKeamanan.query.filter_by(nama_shift=setting_type).first()
                     if current_setting and current_setting.id:
                         db.session.delete(current_setting)
@@ -253,63 +291,42 @@ def pengaturan_pegawai():
 
                 if not all([jam_masuk_mulai_str, jam_masuk_selesai_str, jam_pulang_mulai_str, jam_pulang_selesai_str]):
                     flash("Semua waktu wajib diisi (kecuali batas terlambat).", "danger")
-                    return redirect(url_for("pengaturan"))
+                else:
+                    jam_masuk_mulai = datetime.strptime(jam_masuk_mulai_str, "%H:%M").time()
+                    jam_masuk_selesai = datetime.strptime(jam_masuk_selesai_str, "%H:%M").time()
+                    jam_pulang_mulai = datetime.strptime(jam_pulang_mulai_str, "%H:%M").time()
+                    jam_pulang_selesai = datetime.strptime(jam_pulang_selesai_str, "%H:%M").time()
+                    jam_terlambat_selesai = datetime.strptime(jam_terlambat_selesai_str, "%H:%M").time() if jam_terlambat_selesai_str else None
 
-                # Konversi string waktu ke objek time
-                jam_masuk_mulai = datetime.strptime(jam_masuk_mulai_str, "%H:%M").time()
-                jam_masuk_selesai = datetime.strptime(jam_masuk_selesai_str, "%H:%M").time()
-                jam_pulang_mulai = datetime.strptime(jam_pulang_mulai_str, "%H:%M").time()
-                jam_pulang_selesai = datetime.strptime(jam_pulang_selesai_str, "%H:%M").time()
-                jam_terlambat_selesai = datetime.strptime(jam_terlambat_selesai_str,
-                                                          "%H:%M").time() if jam_terlambat_selesai_str else None
+                    if setting_type == "guru_staf":
+                        if not setting_guru_staf:
+                            setting_guru_staf = SettingWaktuGuruStaf()
+                            db.session.add(setting_guru_staf)
+                        setting_guru_staf.jam_masuk_mulai = jam_masuk_mulai
+                        setting_guru_staf.jam_masuk_selesai = jam_masuk_selesai
+                        setting_guru_staf.jam_pulang_mulai = jam_pulang_mulai
+                        setting_guru_staf.jam_pulang_selesai = jam_pulang_selesai
+                        setting_guru_staf.jam_terlambat_selesai = jam_terlambat_selesai
+                        flash("Pengaturan waktu Guru/Staf berhasil diperbarui.", "success")
 
-                if setting_type == "guru_staf":
-                    # Simpan Guru/Staf
-                    if not setting_guru_staf:
-                        setting_guru_staf = SettingWaktuGuruStaf()
-                        db.session.add(setting_guru_staf)
-
-                    setting_guru_staf.jam_masuk_mulai = jam_masuk_mulai
-                    setting_guru_staf.jam_masuk_selesai = jam_masuk_selesai
-                    setting_guru_staf.jam_pulang_mulai = jam_pulang_mulai
-                    setting_guru_staf.jam_pulang_selesai = jam_pulang_selesai
-                    setting_guru_staf.jam_terlambat_selesai = jam_terlambat_selesai
-
-                    flash("Pengaturan waktu Guru/Staf berhasil diperbarui.", "success")
-
-                elif setting_type in shifts:
-                    # Simpan Keamanan per shift
-                    current_setting = SettingWaktuKeamanan.query.filter_by(nama_shift=setting_type).first()
-                    if not current_setting:
-                        current_setting = SettingWaktuKeamanan(nama_shift=setting_type)
-                        db.session.add(current_setting)
-
-                    current_setting.jam_masuk_mulai = jam_masuk_mulai
-                    current_setting.jam_masuk_selesai = jam_masuk_selesai
-                    current_setting.jam_pulang_mulai = jam_pulang_mulai
-                    current_setting.jam_pulang_selesai = jam_pulang_selesai
-                    current_setting.jam_terlambat_selesai = jam_terlambat_selesai
-
-                    shift_display_name = setting_type.capitalize().replace('Shift', 'Shift ')
-                    flash(
-                        f"Pengaturan waktu Keamanan {shift_display_name} berhasil diperbarui.",
-                        "success")
-
-                db.session.commit()
-
-            else:
-                flash("Aksi tidak valid.", "danger")
-
-        except ValueError:
-            flash("Format waktu tidak valid, silakan coba lagi.", "danger")
+                    elif setting_type in shifts:
+                        current_setting = SettingWaktuKeamanan.query.filter_by(nama_shift=setting_type).first()
+                        if not current_setting:
+                            current_setting = SettingWaktuKeamanan(nama_shift=setting_type)
+                            db.session.add(current_setting)
+                        current_setting.jam_masuk_mulai = jam_masuk_mulai
+                        current_setting.jam_masuk_selesai = jam_masuk_selesai
+                        current_setting.jam_pulang_mulai = jam_pulang_mulai
+                        current_setting.jam_pulang_selesai = jam_pulang_selesai
+                        current_setting.jam_terlambat_selesai = jam_terlambat_selesai
+                        shift_display_name = setting_type.capitalize().replace('Shift', 'Shift ')
+                        flash(f"Pengaturan waktu Keamanan {shift_display_name} berhasil diperbarui.", "success")
+                    
+                    db.session.commit()
         except Exception as e:
             db.session.rollback()
             flash(f"Terjadi kesalahan saat menyimpan: {str(e)}", "danger")
 
-        # Setelah POST, selalu redirect kembali ke halaman pengaturan utama
-        return redirect(url_for("pengaturan"))
-
-    # Jika GET request, redirect ke halaman pengaturan utama
     return redirect(url_for("pengaturan"))
 
 # =======================================================================

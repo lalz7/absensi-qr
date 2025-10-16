@@ -8,6 +8,9 @@ instance/absensi.db
 __pycache__/
 *.pyc
 
-# Editor/IDE folders (opsional, tapi praktik yang baik)
+# Editor/IDE folders 
 .idea/
 .vscode/
+
+# Environment Variables File
+.env

@@ -1,9 +1,10 @@
+import calendar
 from datetime import datetime
 from flask import render_template, jsonify, Blueprint, request
 from models import (
     Siswa, SettingWaktu, Absensi, Pegawai,
     AbsensiPegawai, SettingWaktuGuruStaf,
-    SettingWaktuKeamanan, db, JadwalKeamanan
+    SettingWaktuKeamanan, db, JadwalKeamanan, HariLibur
 )
 from utils import format_nomor_hp
 import requests
@@ -11,7 +12,7 @@ import requests
 scan_bp = Blueprint("scan_bp", __name__, url_prefix="/scan")
 
 # =======================================================================
-#  ROUTE: HALAMAN SCAN QR
+#  ROUTE: HALAMAN SCAN QR (Tidak Berubah)
 # =======================================================================
 @scan_bp.route("/")
 def scan():
@@ -20,7 +21,7 @@ def scan():
 
 
 # =======================================================================
-#  ROUTE: PROSES SUBMIT QR
+#  ROUTE: PROSES SUBMIT QR (DENGAN INTEGRASI HARI LIBUR)
 # =======================================================================
 @scan_bp.route("/submit_scan", methods=["POST"])
 def submit_scan():
@@ -29,6 +30,33 @@ def submit_scan():
 
     if not qr_data:
         return jsonify({'status': 'danger', 'message': 'Data QR tidak ditemukan.'})
+    
+    now = datetime.now()
+    hari_ini = now.date()
+    nama_hari_ini = calendar.day_name[hari_ini.weekday()]
+
+    # ==============================================================================
+    #  INTEGRASI: Lakukan Pengecekan Hari Libur Berlapis
+    # ==============================================================================
+    
+    # 1. Cek Libur Rutin (Mingguan)
+    setting_waktu = SettingWaktu.query.first()
+    if setting_waktu and setting_waktu.hari_libur_rutin:
+        libur_rutin = setting_waktu.hari_libur_rutin.split(',')
+        if nama_hari_ini in libur_rutin:
+            return jsonify({
+                'status': 'warning',
+                'message': f"Hari {nama_hari_ini} adalah hari libur rutin. Absensi tidak dicatat."
+            })
+
+    # 2. Cek Libur Spesial (Tanggal Merah)
+    libur_spesial = HariLibur.query.filter_by(tanggal=hari_ini).first()
+    if libur_spesial:
+        return jsonify({
+            'status': 'warning',
+            'message': f"Hari ini libur: {libur_spesial.keterangan}. Absensi tidak dicatat."
+        })
+    # ==============================================================================
 
     qr_data = qr_data.strip().lower()
     if len(qr_data) < 2:
@@ -36,9 +64,6 @@ def submit_scan():
 
     prefix = qr_data[0]
     identifier = qr_data[1:]
-
-    now = datetime.now()
-    hari_ini = now.date()
     waktu_skrg = now.time()
 
     entity = None
@@ -48,7 +73,7 @@ def submit_scan():
     send_wa = False
     role = None
     shift = None
-
+    
     # ====================== SISWA ======================
     if prefix == 's':
         entity = Siswa.query.filter_by(nis=identifier).first()
