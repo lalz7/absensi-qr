@@ -3,7 +3,7 @@ from flask import render_template, jsonify, Blueprint, request
 from models import (
     Siswa, SettingWaktu, Absensi, Pegawai,
     AbsensiPegawai, SettingWaktuGuruStaf,
-    SettingWaktuKeamanan, db
+    SettingWaktuKeamanan, db, JadwalKeamanan
 )
 from utils import format_nomor_hp
 import requests
@@ -73,11 +73,13 @@ def submit_scan():
         if role in ('guru', 'staf'):
             setting = SettingWaktuGuruStaf.query.first()
         elif role == 'keamanan':
-            shift = entity.shift
-            if shift:
+            # AMBIL SHIFT DARI JADWAL KEAMANAN BERDASARKAN HARI INI
+            jadwal_hari_ini = JadwalKeamanan.query.filter_by(pegawai_id=entity.id, tanggal=hari_ini).first()
+            if jadwal_hari_ini and jadwal_hari_ini.shift not in ['Off', '']:
+                shift = jadwal_hari_ini.shift
                 setting = SettingWaktuKeamanan.query.filter_by(nama_shift=shift).first()
             else:
-                return jsonify({'status': 'danger', 'message': 'Pegawai keamanan belum memiliki shift.'})
+                return jsonify({'status': 'danger', 'message': 'Jadwal keamanan untuk hari ini tidak ditemukan atau sedang libur.'})
         else:
             return jsonify({'status': 'danger', 'message': f'Role {role} tidak dikenali.'})
 
