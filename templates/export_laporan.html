@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% block title %}Export Laporan{% endblock %}
+
 {% block content %}
 
 <div class="container my-5">
-    <h3 class="mb-4">📤 Export Laporan Absensi</h3>
+    <h3 class="fw-bold mb-4 page-title"><i class="bi bi-file-earmark-arrow-down me-2"></i>Export Laporan Absensi</h3>
 
     <!-- FORM EKSPOR -->
     <form method="POST" action="{{ url_for('export_bp.export_laporan') }}" class="card p-4 shadow-sm">

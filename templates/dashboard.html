@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
 
 {% block content %}
 <style>
@@ -74,8 +75,7 @@
 </style>
 
 <div class="container my-4">
-    <h2 class="mb-4 text-center fw-bold text-dark">Dashboard Absensi</h2>
-
+    <h3 class="fw-bold mb-4 page-title"><i class="bi bi-speedometer2 me-2"></i>Dashboard Absensi</h3>
     {% if info_hari_ini %}
     <div class="alert alert-danger text-center fw-bold" role="alert">
         <i class="bi bi-calendar-x-fill me-2"></i>

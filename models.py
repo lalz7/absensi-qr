@@ -78,8 +78,10 @@ class Pegawai(db.Model):
     shift: Mapped[str] = mapped_column(String(10), nullable=True)
 
     qr_path: Mapped[str] = mapped_column(String(200), nullable=True)
-    absensi_list: Mapped[list["AbsensiPegawai"]] = relationship(back_populates="pegawai_relasi")
-    jadwal_keamanan_list: Mapped[list["JadwalKeamanan"]] = relationship(back_populates="pegawai_relasi")
+    
+    # PERUBAHAN: Menambahkan cascade="all, delete-orphan" untuk menghapus data terkait secara otomatis
+    absensi_list: Mapped[list["AbsensiPegawai"]] = relationship(back_populates="pegawai_relasi", cascade="all, delete-orphan")
+    jadwal_keamanan_list: Mapped[list["JadwalKeamanan"]] = relationship(back_populates="pegawai_relasi", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f'<Pegawai {self.nama} (Role: {self.role})>'

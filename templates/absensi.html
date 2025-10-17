@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% block title %}Absensi Siswa{% endblock %}
 
 {% block content %}
+
 <div class="container my-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h3 class="mb-0">Laporan Absensi Harian Siswa</h3>
+        <h3 class="fw-bold mb-4 page-title"><i class="bi bi-clipboard-check me-2"></i>Laporan Absensi Siswa</h3>
         <form method="GET" action="{{ url_for('absensi_bp.absensi') }}" class="d-flex align-items-center gap-2">
             <input type="date" name="tanggal" class="form-control" value="{{ tanggal_dipilih.strftime('%Y-%m-%d') }}">
             <button type="submit" class="btn btn-dark">Tampilkan</button>
