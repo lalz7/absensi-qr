@@ -93,9 +93,14 @@ app.jinja_env.filters['get_badge_color'] = get_badge_color
 def login():
     """Rute login admin."""
     if request.method == "POST":
-        if request.form["username"] == "admin" and request.form["password"] == "123":
+        # Ambil kredensial admin dari environment variables
+        ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+        ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123")
+
+        if request.form["username"] == ADMIN_USERNAME and request.form["password"] == ADMIN_PASSWORD:
             session["admin"] = True
             return redirect(url_for("dashboard_bp.dashboard"))
+        
         flash("Username atau password salah.", "danger")
         return redirect(url_for("login"))
     return render_template("login.html")
